@@ -1,4 +1,4 @@
-# Statistical-Modeling-in-R-Projects
+# Statistical Modeling in R
 STAT 420 at UIUC, Summer 2019, with Professor Unger and Professor Dalpiaz
 
 ## Projects included
