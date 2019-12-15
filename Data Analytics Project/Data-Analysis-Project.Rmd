@@ -1,0 +1,318 @@
+---
+title: "Data Analysis Project"
+author: "Yixin Wang, Yaoling Wang, Tiantian Zhang"
+date: "8/3/2019"
+output: 
+  pdf_document: default
+  html_document: 
+    toc: yes
+urlcolor: cyan
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### Group Members
+
+```{r, echo = FALSE}
+library(knitr)
+Name = c("Yixin Wang", "Yaoling Wang", "Tiantian Zhang")
+NetID = c("yixinw2", "yaoling2", "tz8")
+group_member = data.frame(Name, NetID)
+kable(group_member)
+```
+
+## Introduction
+
+#### Project Title
+**Analysis of Property Price in New York**
+
+The data includes 1734 random samples which were taken from full Saratoga Housing Data (De Veaux).
+
+#### Dataset 
+
+A snippet. Here are the first 10 columns of the dataset inclusing response variable "price".
+```{r }
+library(readr)
+house = read.csv("housing-prices-ge19.csv")
+knitr::kable(head(house)[,1:10])
+```
+
+#### Dataset Description
+
+The dataset has 1,734 observations. It includes below information of the properties in New York area:
+
+- `Price` - The housing price
+- `Lot.Size` - The lot size
+- `Living.Area`
+- `Land.Value`
+- `Age` - The number of years the property has been built
+- `New.Construct` - A dummy variable that takes the value 1 if the property is newly constructed
+- `Pct.College`
+- `Fuel.Type` - Electric, gas or oil
+- `Heat.Type` - Electric, hot water, or hot air
+- `Sewer.Type` - Private or public
+- `Central.Air` - A dummy variable that takes the value 1 if the property has central air conditioner
+- `Waterfront` - A dummy variable that takes the value 1 if there is a waterfront in the property
+- `Fireplaces` - The number of fireplaces
+- `Bedrooms` - The number of bedrooms
+- `Bathrooms` - The number of bathrooms
+- `Rooms` - The number of rooms
+- `Test`
+
+We are attempting to fit a model with `Price` as the response and the remaining variables as predictors. 
+
+#### Source
+
+ - Data: [`housing-prices.csv`](housing-prices.csv)
+ - Website: https://dasl.datadescription.com/datafile/housing-prices-ge19/
+ 
+#### Interest in Topic
+
+ - Our team chooses housing prices in Saratoga because we all have a deep interest in real estate, especially the pricing of a piece of real property.
+
+ - Generally, we link the housing price with living area, but we believe that there must be properties besides living area that influence the housing price. To be specific, we would like to know how these properties interact and play a role in determining the housing prices.
+
+ - Based on the model we build, we would like to figure out what properties influence the housing price most and what properties should be ignored or less concerned about when we determine a housing price.
+
+ - Furthermore, using our model, we could have a round estimate of a housing price and evaluate whether the housing price provided by a third-party is overestimated or not.
+ 
+#### Goal of this model
+
+ - Our group aims to create a model that helps to predict the housing price in New York.
+
+## Methods
+
+```{r message=FALSE, warning=FALSE}
+# Read the data
+library(readr)
+house <- read_csv("housing-prices-ge19.csv")
+View(house)
+
+# Remove missing data
+house = subset(house, house$Fuel.Type != "Unknown/Other")
+house = subset(house, house$Fuel.Type != "None")
+house = subset(house, house$Heat.Type != "None")
+house = subset(house, house$Sewer.Type != "None/Unknown")
+
+# Change variables from character to factor
+house$Fuel.Type = as.factor(house$Fuel.Type)
+house$Heat.Type = as.factor(house$Heat.Type)
+house$Sewer.Type = as.factor(house$Sewer.Type)
+
+# Check final structure of data
+str(house)
+```
+
+$\quad$ Before we attempt to fit the models that predict `price`, four predictor variables catch our eyes: `Living.Area`, `Rooms`, `Bedrooms` and `Bathrooms`. We suspect the living area of a property is somewhat correlated to its number of rooms, including bedrooms and bathrooms. To test our guess, we run the following code:
+
+```{r}
+living_area_mod = lm(Living.Area ~ Rooms + Bedrooms + Bathrooms, data = house)
+summary(living_area_mod)$r.squared
+```
+
+$\quad$ Here we see that `Rooms`, `Bedrooms` and `Bathrooms` explain 71.80% of the variation in `Living.Area`. In addition, as the `Rooms` variable is partly consists of `Bedrooms` and `Bathrooms`, we decided to remove `Living.Area` and `Rooms`. 
+
+$\quad$ Furthermore, the `New.Construct` variable is also correlated to the `Age` variable, as `New.Construct` indicates the properties whose `Age` equals to 0. Therefore, we decided to remove the `New.Construct` predictor as well.
+
+```{r}
+house_data = subset(house, select = -c(Living.Area, Rooms, New.Construct))
+```
+
+$\quad$ Now, we check the multicollinearity issue again. 
+
+```{r}
+round(cor(subset(house_data, select = -c(Fuel.Type, Heat.Type, Sewer.Type))), 2)
+```
+
+$\quad$ From the matrix above, we see no obvious collinearity. 
+
+$\quad$ Then we start searching proper models to predict the housing price in New York, using the backwards selection via AIC and BIC. We set three models for the starts of the research:
+
+- `full_add_mod`: An additive model that considers all available predictors
+
+- `full_big_mod`: A model that considers all available predictors as well as their polynomial and logarithmic transformations
+
+- `full_log_mod`: A model that uses logarithmic transformation of the response and considers all available predictors as well as their polynomial and logarithmic transformations
+
+$\quad$ After finding the "best" models with the help of the backwards research, we extract the unusual observations that has a large effect on the regression and refit the models. 
+
+```{r}
+# Extract influential points
+get_influential = function(model) {
+  which(cooks.distance(model) > 4 / length(cooks.distance(model)))
+}
+
+
+full_add_mod = lm(Price ~ ., data = house_data)
+
+# backward AIC using full_add_mod as the start
+back_aic_add_mod = step(full_add_mod, direction = "backward", trace = 0)
+unusual = get_influential(back_aic_add_mod)
+house_data_aic_add = house_data[-unusual,]
+back_aic_add_mod = lm(formula = back_aic_add_mod, data = house_data_aic_add)
+
+# backward BIC using full_add_mod as the start
+back_bic_add_mod = step(full_add_mod, direction = "backward", k = log(length(resid(full_add_mod))), trace = 0)
+unusual = get_influential(back_bic_add_mod)
+house_data_bic_add = house_data[-unusual,]
+back_bic_add_mod = lm(formula = back_bic_add_mod, data = house_data_bic_add)
+
+
+full_big_mod = lm(Price ~ . + I(Lot.Size ^ 2) + I(Age ^ 2) + I(Land.Value ^ 2) + I(Pct.College) + log(Land.Value) + log(Pct.College), data = house_data)
+
+# backward AIC using full_big_mod as the start
+back_aic_big_mod = step(full_big_mod, direction = "backward", trace = 0)
+unusual = get_influential(back_aic_big_mod)
+house_data_aic_big = house_data[-unusual,]
+back_aic_big_mod = lm(formula = back_aic_big_mod, data = house_data_aic_big)
+
+# backward BIC using full_big_mod as the start
+back_bic_big_mod = step(full_big_mod, direction = "backward", k = log(length(resid(full_add_mod))), trace = 0)
+unusual = get_influential(back_bic_big_mod)
+house_data_bic_big = house_data[-unusual,]
+back_bic_big_mod = lm(formula = back_bic_big_mod, data = house_data_bic_big)
+
+
+full_log_mod = lm(log(Price) ~ . + I(Lot.Size ^ 2) + I(Age ^ 2) + I(Land.Value ^ 2) + I(Pct.College) + log(Land.Value) + log(Pct.College), data = house_data)
+
+# backward AIC using full_log_mod as the start
+back_aic_log_mod = step(full_log_mod, direction = "backward", trace = 0)
+unusual = get_influential(back_aic_log_mod)
+house_data_aic_log = house_data[-unusual,]
+back_aic_log_mod = lm(formula = back_aic_log_mod, data = house_data_aic_log)
+
+# backward BIC using full_log_mod as the start
+back_bic_log_mod = step(full_log_mod, direction = "backward", k = log(length(resid(full_add_mod))), trace = 0)
+unusual = get_influential(back_bic_log_mod)
+house_data_bic_log = house_data[-unusual,]
+back_bic_log_mod = lm(formula = back_bic_log_mod, data = house_data_bic_log)
+```
+
+## Results
+
+$\quad$ To select the most suitable model among the results of backwards research, we first check the four basic assumptions of linear regression: **Linearity**, **Independence**, **Normality** and **Equal Variance**. We also calculate their **adjusted $R^2$** and **LOOCV RMSE** as well, as they both not only assess the quality of fit but also consider the size of the model. Due to our prediction purpose, we focus more on LOOCV RMSE as it implicitly penalizes larger models. 
+
+```{r message=FALSE}
+library(lmtest)
+library(faraway)
+
+# Check normality assumption
+get_sw_decision = function(model, alpha = 0.05){
+  decide = unname(shapiro.test(resid(model))$p.value < alpha)
+  ifelse(decide, "Reject", "Fail to Reject")
+}
+
+# Check equal variance assumption
+get_bp_decision = function(model, alpha = 0.05){
+  decide = unname(bptest(model)$p.value < alpha)
+  ifelse(decide, "Reject", "Fail to Reject")
+}
+
+# Calculate adjusted r squared
+get_adj_r2 = function(model) {
+  summary(model)$adj.r.squared
+}
+
+# Calculate LOOCV RMSE
+get_loocv_rmse = function(model) {
+  sqrt(mean((resid(model) / (1 - hatvalues(model))) ^ 2))
+}
+
+# Calculate number of parameters
+get_num_params = function(model) {
+  length(coef(model))
+}
+
+# Calculate the number of vif larger than 5
+get_big_vif = function(model) {
+  sum(vif(model) > 5)
+}
+
+select_mod = data.frame(sw_decision = c(get_sw_decision(back_aic_add_mod),
+                                            get_sw_decision(back_bic_add_mod),
+                                            get_sw_decision(back_aic_big_mod),
+                                            get_sw_decision(back_bic_big_mod),
+                                            get_sw_decision(back_aic_log_mod),
+                                            get_sw_decision(back_bic_log_mod)),
+                            bp_decision = c(get_bp_decision(back_aic_add_mod),
+                                            get_bp_decision(back_bic_add_mod),
+                                            get_bp_decision(back_aic_big_mod),
+                                            get_bp_decision(back_bic_big_mod),
+                                            get_sw_decision(back_aic_log_mod),
+                                            get_sw_decision(back_bic_log_mod)),
+                            loocv_rmse = c(get_loocv_rmse(back_aic_add_mod),
+                                           get_loocv_rmse(back_bic_add_mod),
+                                           get_loocv_rmse(back_aic_big_mod),
+                                           get_loocv_rmse(back_bic_big_mod),
+                                           get_loocv_rmse(back_aic_log_mod),
+                                           get_loocv_rmse(back_bic_log_mod)),
+                            adj_r2 = c(get_adj_r2(back_aic_add_mod),
+                                       get_adj_r2(back_bic_add_mod),
+                                       get_adj_r2(back_aic_big_mod),
+                                       get_adj_r2(back_bic_big_mod),
+                                       get_adj_r2(back_aic_log_mod),
+                                       get_adj_r2(back_bic_log_mod)),
+                            num_params = c(get_num_params(back_aic_add_mod),
+                                           get_num_params(back_bic_add_mod),
+                                           get_num_params(back_aic_big_mod),
+                                           get_num_params(back_bic_big_mod),
+                                           get_num_params(back_aic_log_mod),
+                                           get_num_params(back_bic_log_mod)),
+                            big_vif = c(get_big_vif(back_aic_add_mod),
+                                        get_big_vif(back_bic_add_mod),
+                                        get_big_vif(back_aic_big_mod),
+                                        get_big_vif(back_bic_big_mod),
+                                        get_big_vif(back_aic_log_mod),
+                                        get_big_vif(back_bic_log_mod)),
+                            row.names = c("back_aic_add_mod", 
+                                          "back_bic_add_mod", 
+                                          "back_aic_big_mod", 
+                                          "back_bic_big_mod",
+                                          "back_aic_log_mod",
+                                          "back_bic_log_mod"))
+
+kable(select_mod)
+```
+
+$\quad$ From the table above, we can see that only the last model, `back_bic_log_mod`, passes the Breusch-Pagan Test and Shapiro-Wilk Test, indicating its satisfaction of the normality and equal variance assumptions. In addition, it also has a relatively low LOOCV RMSE and a high adjusted $R ^ 2$, certifying a good fit to data. In addition, although it has 6 parameters whose vif is larger than 5, it is reasonable due to the polynomial and logarithmic transformations of the predictors.
+
+$\quad$ To double-check whether it satisfies all the assumptions of regression, we also draw its fitted vs residuals plot and normal Q-Q plot. 
+
+```{r}
+par(mfrow = c(1, 2))
+
+plot(fitted(back_bic_log_mod), resid(back_bic_log_mod), col = "grey", pch = 20, xlab = "Fitted", ylab = "Residuals", main = "Fitted vs Residuals Plot")
+abline(h = 0, col = "darkorange", lwd = 2)
+
+qqnorm(resid(back_bic_log_mod), main = "Normal Q-Q Plot", col = "darkgrey")
+qqline(resid(back_bic_log_mod), col = "dodgerblue", lwd = 2)
+```
+
+$\quad$ As we can see from the charts, the points in the fitted vs residuals plot are roughly centered at 0 with basically equal spreads. And the points in Q-Q plot strictly follow a straight line as well. Therefore, the model, `back_bic_log_mod`, does not violates any assumptions and becomes our final choise of model.
+
+```{r}
+formula(back_bic_log_mod)
+```
+
+**The best model:** `back_bic_log_mod`
+
+\[log(\text{Price}) = `r round(coef(back_bic_log_mod)[1],2)` + `r round(coef(back_bic_log_mod)[2],2)` * \text{Lot.Size} + `r round(coef(back_bic_log_mod)[3],2)` * \text{Waterfront} + `r round(coef(back_bic_log_mod)[4],2)` * \text{Age} + `r round(coef(back_bic_log_mod)[5],2)` * \text{Land.Value} + `r round(coef(back_bic_log_mod)[6],2)` * \text{Central.Air} + `r round(coef(back_bic_log_mod)[7],2)` * \text{Bedrooms} + `r round(coef(back_bic_log_mod)[8],2)` * \text{Fireplaces} + `r round(coef(back_bic_log_mod)[9],2)` * \text{Bathrooms} + `r round(coef(back_bic_log_mod)[10],2)` * \text{Lot.Size} ^ 2 + `r round(coef(back_bic_log_mod)[11],2)` * \text{Age} ^ 2 + `r round(coef(back_bic_log_mod)[12],2)` * \text{Land.Value} ^ 2\]
+
+## Discussion
+
+ - Overall, our housing-price model seems valid (i.e. not violate any assumptions). The model has a relatively low LOOCV RMSE and a high adjusted $R ^ 2$. We detected a relationship between the log transformed response variable and the predictors, which gives us insight on what factors can influence the housing price in New York.
+ 
+ - With the help of this model, we could estimate a possible price for a house in New York after knowing the information about its `Lot.Size`, `Waterfront`, `Central.Air`, `Bedrooms`, `Fireplaces` and `Bathrooms`.
+ 
+ 
+ - However, although the model that we generated above passes the Breusch-Pagan Test and Shapiro-Wilk Test, we still need to be aware of the overfitting issue. Since there are 1716 observations in the dataset, and to make it pass the Shapiro-Wilk test, we might create the model more complex than what it should be like. Therefore, the price prediction using the overfitting model might not be very accurate.
+ 
+ - Also, we should notice that, in reality, there are countless factors that could impact the house prices, and it could not be possible to include all of the significant predictors in this dataset. For example, factors like $\text{distance to downtown}$, $\text{furniture condition}$, $\text{pricing strategy using by the real estate intermediary}$, and $\text{economic situation}$ can impact the housing prices.
+ 
+ - More importantly, the predictors in our model are objective, but the pricing process is actually subjective. We never know what people's intention is when they determine the price for a house.
+
+ - But still, we believe that the model we created could be served as a valuable reference when we estimate the housing prices in New York. The model would be useful when we want to buy a house in New York or cities similar to New York. Rather than being dazzled by different prices presented on different real-estate third-party website, we could simply estimate the price of our ideal houses using this model, and then considers the houses whose prices on the website are similar to our estimates.
